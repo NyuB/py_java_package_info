@@ -4,6 +4,7 @@ import os
 import sys
 from dataclasses import dataclass
 from string import Template
+from enum import IntEnum
 
 
 @dataclass
@@ -98,8 +99,10 @@ def read_lines(file: str) -> list[str]:
         return f.readlines()
 
 
-error_code_failed_check = 1
-error_code_invalid_call = 2
+class ErrorCode(IntEnum):
+    OK = 0
+    FAILED_CHECK = 1
+    INVALID_CALL = 2
 
 
 def count_missing(scan: list[PackageScanItem]) -> int:
@@ -110,42 +113,42 @@ def count_missing(scan: list[PackageScanItem]) -> int:
     return res
 
 
-def main(command: str, sources_root: str, template_file: str | None = None) -> int:
+def main(command: str, sources_root: str, template_file: str | None = None) -> ErrorCode:
     if command in ["set-missing", "set-all"] and template_file is None:
         print("Missing template file to write package-info files")
-        return 2
+        return ErrorCode.INVALID_CALL
     scan = scan_packages(sources_root)
     if command == "set-missing" and template_file is not None:
         template = read_lines(template_file)
         count = write_all_missing(scan, template)
         print(f"Added {count} package-info.java")
-        return 0
+        return ErrorCode.OK
     elif command == "set-all" and template_file is not None:
         template = read_lines(template_file)
         count = write_all(scan, template)
         print(f"Added {count} package-info.java")
-        return 0
+        return ErrorCode.OK
     elif command == "check":
         missing_count = count_missing(scan)
         if missing_count > 0:
             error_all_missing(scan)
             print(f"Missing {missing_count} package-info.java files", file=sys.stderr)
-            return error_code_failed_check
+            return ErrorCode.FAILED_CHECK
         else:
-            return 0
+            return ErrorCode.OK
     else:
         print(f"Unsupported command {command}", file=sys.stderr)
-        return error_code_invalid_call
+        return ErrorCode.INVALID_CALL
 
 
 if __name__ == "__main__":
     args = sys.argv[1:]
     if len(args) < 2:
         print("Usage: <command> <sources_root> ?<template_file>", file=sys.stderr)
-        exit(2)
+        exit(ErrorCode.INVALID_CALL)
     if args[0] not in ["set-all", "set-missing", "check"]:
         print(f"Unknown command {args[0]}", file=sys.stderr)
-        exit(2)
+        exit(ErrorCode.INVALID_CALL)
     exit(main(args[0], args[1], args[2] if len(args) > 2 else None))
 
 
@@ -186,7 +189,7 @@ class Tests(unittest.TestCase):
 
             err_code = main("set-all", temp_dir, template_file)
 
-            self.assertEqual(0, err_code)
+            self.assertEqual(ErrorCode.OK, err_code)
             self.assertCountEqual(
                 ["already;\n", "// Erasing previous content"],
                 self.read_lines(os.path.join(temp_dir, "already/package-info.java")),
@@ -206,7 +209,7 @@ class Tests(unittest.TestCase):
 
             err_code = main("set-missing", temp_dir, template_file)
 
-            self.assertEqual(0, err_code)
+            self.assertEqual(ErrorCode.OK, err_code)
             self.assertCountEqual(
                 ["// Should NOT be erased"],
                 self.read_lines(os.path.join(temp_dir, "already/package-info.java")),
@@ -230,7 +233,7 @@ class Tests(unittest.TestCase):
 
             err_code = main("set-all", temp_dir, template_file)
 
-            self.assertEqual(0, err_code)
+            self.assertEqual(ErrorCode.OK, err_code)
             self.assertFalse(
                 os.path.exists(os.path.join(temp_dir, "txt/package-info.java"))
             )
@@ -251,20 +254,20 @@ class Tests(unittest.TestCase):
 
             err_code = main("check", temp_dir, None)
 
-            self.assertEqual(1, err_code)
+            self.assertEqual(ErrorCode.FAILED_CHECK, err_code)
 
     def test_check_ignores_no_file(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             os.makedirs(os.path.join(temp_dir, "nofile"))
             err_code = main("check", temp_dir, None)
-            self.assertEqual(0, err_code)
+            self.assertEqual(ErrorCode.OK, err_code)
 
     def test_check_ignores_no_jvm_file(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             missing_but_no_jvm = os.path.join(temp_dir, "nonjvm/file.txt")
             self.write_lines(missing_but_no_jvm, ["some content"])
             err_code = main("check", temp_dir, None)
-            self.assertEqual(0, err_code)
+            self.assertEqual(ErrorCode.OK, err_code)
 
     test_template = ["${package};", "// Erasing previous content"]
 
