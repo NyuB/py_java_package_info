@@ -11,6 +11,7 @@ class PackageScanItem:
     full_path: str
     package: str
     has_package_info: bool
+    has_jvm_file: bool
 
     def __eq__(self, other: object) -> bool:
         if type(other) is not PackageScanItem:
@@ -19,7 +20,19 @@ class PackageScanItem:
             return False
         if not other.package == self.package:
             return False
+        if not other.has_jvm_file == self.has_jvm_file:
+            return False
         return True
+
+
+jvm_extensions = [".java", ".kt", ".scala", ".clj"]
+
+
+def is_jvm_file(filename: str) -> bool:
+    for e in jvm_extensions:
+        if filename.endswith(e):
+            return True
+    return False
 
 
 def scan_packages(root: str) -> list[PackageScanItem]:
@@ -28,7 +41,7 @@ def scan_packages(root: str) -> list[PackageScanItem]:
 
     :param str root: where to start scanning for packages, would be **src/main/java** or **src/test/java** for a typical maven project
     """
-    q = [PackageScanItem(root, "", False)]
+    q = [PackageScanItem(root, "", False, False)]
     res: list[PackageScanItem] = []
     while len(q) > 0:
         parent = q[0]
@@ -41,6 +54,7 @@ def scan_packages(root: str) -> list[PackageScanItem]:
                     sub_full,
                     package,
                     os.path.isfile(os.path.join(sub_full, "package-info.java")),
+                    any([is_jvm_file(f) for f in os.listdir(sub_full)]),
                 )
                 res.append(next)
                 q.append(next)
@@ -59,7 +73,7 @@ def write_all(scan: list[PackageScanItem], template_lines: list[str]) -> int:
     Write a package-info from template and return the number of written package-info
     """
     count = 0
-    for item in scan:
+    for item in [i for i in scan if i.has_jvm_file]:
         with open(os.path.join(item.full_path, "package-info.java"), "w") as f:
             f.writelines(
                 [Template(l).substitute(package=item.package) for l in template_lines]
@@ -88,6 +102,14 @@ error_code_failed_check = 1
 error_code_invalid_call = 2
 
 
+def count_missing(scan: list[PackageScanItem]) -> int:
+    res = 0
+    for i in scan:
+        if not i.has_package_info and i.has_jvm_file:
+            res += 1
+    return res
+
+
 def main(command: str, sources_root: str, template_file: str | None = None) -> int:
     if command in ["set-missing", "set-all"] and template_file is None:
         print("Missing template file to write package-info files")
@@ -107,8 +129,10 @@ def main(command: str, sources_root: str, template_file: str | None = None) -> i
         missing_count = count_missing(scan)
         if missing_count > 0:
             error_all_missing(scan)
-        print(f"Missing {missing_count} package-info.java files", file=sys.stderr)
-        return error_code_failed_check
+            print(f"Missing {missing_count} package-info.java files", file=sys.stderr)
+            return error_code_failed_check
+        else:
+            return 0
     else:
         print(f"Unsupported command {command}", file=sys.stderr)
         return error_code_invalid_call
@@ -123,14 +147,6 @@ if __name__ == "__main__":
         print(f"Unknown command {args[0]}", file=sys.stderr)
         exit(2)
     exit(main(args[0], args[1], args[2] if len(args) > 2 else None))
-
-
-def count_missing(scan: list[PackageScanItem]) -> int:
-    res = 0
-    for i in scan:
-        if not i.has_package_info:
-            res += 1
-    return res
 
 
 class Tests(unittest.TestCase):
@@ -151,12 +167,12 @@ class Tests(unittest.TestCase):
             actual = scan_packages(temp_dir)
 
             expected = [
-                PackageScanItem(os.path.join(temp_dir, "a/"), "a", True),
-                PackageScanItem(os.path.join(temp_dir, "a/b/"), "a.b", True),
-                PackageScanItem(os.path.join(temp_dir, "c"), "c", False),
-                PackageScanItem(os.path.join(temp_dir, "d"), "d", False),
-                PackageScanItem(os.path.join(temp_dir, "d/e"), "d.e", False),
-                PackageScanItem(os.path.join(temp_dir, "f"), "f", False),
+                PackageScanItem(os.path.join(temp_dir, "a/"), "a", True, True),
+                PackageScanItem(os.path.join(temp_dir, "a/b/"), "a.b", True, True),
+                PackageScanItem(os.path.join(temp_dir, "c"), "c", False, True),
+                PackageScanItem(os.path.join(temp_dir, "d"), "d", False, False),
+                PackageScanItem(os.path.join(temp_dir, "d/e"), "d.e", False, False),
+                PackageScanItem(os.path.join(temp_dir, "f"), "f", False, False),
             ]
             self.assertCountEqual(actual, expected)
 
@@ -164,7 +180,8 @@ class Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             already = os.path.join(temp_dir, "already/package-info.java")
             self.write_lines(already, ["// Should be erased"])
-            os.makedirs(os.path.join(temp_dir, "missing"))
+            missing = os.path.join(temp_dir, "missing/Main.java")
+            self.write_lines(missing, ["public class Main {}"])
             template_file = self.create_template_file(temp_dir)
 
             err_code = main("set-all", temp_dir, template_file)
@@ -183,7 +200,8 @@ class Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             already = os.path.join(temp_dir, "already/package-info.java")
             self.write_lines(already, ["// Should NOT be erased"])
-            os.makedirs(os.path.join(temp_dir, "missing"))
+            missing = os.path.join(temp_dir, "missing/Main.java")
+            self.write_lines(missing, ["public class Main {}"])
             template_file = self.create_template_file(temp_dir)
 
             err_code = main("set-missing", temp_dir, template_file)
@@ -198,15 +216,55 @@ class Tests(unittest.TestCase):
                 self.read_lines(os.path.join(temp_dir, "missing/package-info.java")),
             )
 
+    def test_set_all_only_jvm_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            non_jvm_file = os.path.join(temp_dir, "txt/ressource.txt")
+            kotlin_file = os.path.join(temp_dir, "kotlin/Main.kt")
+            scala_file = os.path.join(temp_dir, "scala/Main.scala")
+            clojure_file = os.path.join(temp_dir, "clojure/Main.clj")
+            java_file = os.path.join(temp_dir, "java/Main.java")
+            self.write_lines(non_jvm_file, ["I'm not a java file"])
+            for jvm_file in [kotlin_file, scala_file, clojure_file, java_file]:
+                self.write_lines(jvm_file, ["// I'm a jvm file"])
+            template_file = self.create_template_file(temp_dir)
+
+            err_code = main("set-all", temp_dir, template_file)
+
+            self.assertEqual(0, err_code)
+            self.assertFalse(
+                os.path.exists(os.path.join(temp_dir, "txt/package-info.java"))
+            )
+            for base in ["kotlin", "scala", "clojure", "java"]:
+                self.assertCountEqual(
+                    [f"{base};\n", "// Erasing previous content"],
+                    self.read_lines(
+                        os.path.join(temp_dir, f"{base}/package-info.java")
+                    ),
+                )
+
     def test_check(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             already = os.path.join(temp_dir, "ok/package-info.java")
             self.write_lines(already, ["// Ok"])
-            os.makedirs(os.path.join(temp_dir, "missing"))
+            missing = os.path.join(temp_dir, "missing/Main.java")
+            self.write_lines(missing, ["public class Main {}"])
 
             err_code = main("check", temp_dir, None)
 
             self.assertEqual(1, err_code)
+
+    def test_check_ignores_no_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.makedirs(os.path.join(temp_dir, "nofile"))
+            err_code = main("check", temp_dir, None)
+            self.assertEqual(0, err_code)
+
+    def test_check_ignores_no_jvm_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            missing_but_no_jvm = os.path.join(temp_dir, "nonjvm/file.txt")
+            self.write_lines(missing_but_no_jvm, ["some content"])
+            err_code = main("check", temp_dir, None)
+            self.assertEqual(0, err_code)
 
     test_template = ["${package};", "// Erasing previous content"]
 
