@@ -21,5 +21,8 @@ jobs:
     - name: Enforce formatting
       run: make fmt-check PYTHON=python
 
+    - name: Type check
+      run: make type-check PYTHON=python
+
     - name: Test
       run: make test PYTHON=python
