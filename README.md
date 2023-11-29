@@ -1,3 +1,4 @@
+![main branch CI status](https://github.com/NyuB/py_java_package_info/actions/workflows/ci.yml/badge.svg?branch=main)
 # Check and generate package-info.java
 
 ## Usage
