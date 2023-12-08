@@ -9,7 +9,7 @@
 `python3 package_info.py check <sources-root>`
 
 ```bash
-python3 package_info.py check src/main.java
+python3 package_info.py check src/main/java
 ```
 
 ### Generate
