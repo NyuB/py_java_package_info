@@ -113,7 +113,9 @@ def count_missing(scan: list[PackageScanItem]) -> int:
     return res
 
 
-def main(command: str, sources_root: str, template_file: str | None = None) -> ErrorCode:
+def main(
+    command: str, sources_root: str, template_file: str | None = None
+) -> ErrorCode:
     if command in ["set-missing", "set-all"] and template_file is None:
         print("Missing template file to write package-info files")
         return ErrorCode.INVALID_CALL
